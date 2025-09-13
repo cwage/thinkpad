@@ -1,0 +1,10 @@
+---
+# Packages to install (apt names).
+common_packages:
+  - curl
+  - tmux
+  - screen
+  - openssh-server
+  - brave-browser
+  - git
+  - btop

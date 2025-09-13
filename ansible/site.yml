@@ -1,0 +1,41 @@
+---
+- name: Provision local laptop (simple)
+  hosts: localhost
+  become: true
+  gather_facts: true
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Add Brave keyring when brave-browser requested
+      get_url:
+        url: https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg
+        dest: /usr/share/keyrings/brave-browser-archive-keyring.gpg
+        mode: "0644"
+      when: "'brave-browser' in common_packages"
+      tags: [packages]
+
+    - name: Add Brave apt repository when brave-browser requested
+      apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg arch=amd64] https://brave-browser-apt-release.s3.brave.com/ stable main"
+        filename: brave-browser-release
+        state: present
+        update_cache: true
+      when: "'brave-browser' in common_packages"
+      tags: [packages]
+
+    - name: Install packages (apt)
+      apt:
+        name: "{{ common_packages }}"
+        state: present
+        update_cache: true
+      when: common_packages | length > 0
+      tags: [packages]
+
+    - name: Ensure SSH service enabled and started (if openssh-server requested)
+      service:
+        name: ssh
+        enabled: true
+        state: started
+      when: "'openssh-server' in common_packages"
+      tags: [packages]
