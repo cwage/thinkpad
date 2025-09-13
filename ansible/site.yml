@@ -39,3 +39,34 @@
         state: started
       when: "'openssh-server' in common_packages"
       tags: [packages]
+
+    # Xsession desktop entry for GDM to run ~/.xsession
+    - name: Ensure xsessions directory exists
+      file:
+        path: /usr/share/xsessions
+        state: directory
+        mode: "0755"
+      tags: [xsession]
+
+    - name: Install Xsession desktop entry for GDM
+      copy:
+        dest: /usr/share/xsessions/xsession.desktop
+        mode: "0644"
+        content: |
+          [Desktop Entry]
+          Name=Xsession
+          Comment=Run the system Xsession which sources ~/.xsession
+          Exec=/etc/X11/Xsession
+          TryExec=/etc/X11/Xsession
+          Type=Application
+          DesktopNames=X-Generic
+      tags: [xsession]
+
+    - name: Symlink ~/.xsession from dotfiles (if present)
+      file:
+        src: "{{ ansible_env.HOME }}/git/cwage/dotfiles/.xsession"
+        dest: "{{ ansible_env.HOME }}/.xsession"
+        state: link
+        force: true
+      when: lookup('ansible.builtin.fileglob', ansible_env.HOME + '/git/cwage/dotfiles/.xsession', wantlist=False) != ''
+      tags: [xsession]
