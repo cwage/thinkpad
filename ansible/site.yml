@@ -1,10 +1,12 @@
 ---
 - name: Provision local laptop (simple)
   hosts: localhost
-  become: true
   gather_facts: true
+  become: false
   vars_files:
     - vars.yml
+  vars:
+    user_home: "{{ lookup('env','HOME') }}"
 
   tasks:
     - name: Add Brave keyring when brave-browser requested
@@ -12,6 +14,7 @@
         url: https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg
         dest: /usr/share/keyrings/brave-browser-archive-keyring.gpg
         mode: "0644"
+      become: true
       when: "'brave-browser' in common_packages"
       tags: [packages]
 
@@ -21,14 +24,126 @@
         filename: brave-browser-release
         state: present
         update_cache: true
+      become: true
       when: "'brave-browser' in common_packages"
       tags: [packages]
+
+    - name: Install GitHub CLI apt key
+      get_url:
+        url: https://cli.github.com/packages/githubcli-archive-keyring.gpg
+        dest: /usr/share/keyrings/githubcli-archive-keyring.gpg
+        mode: "0644"
+      become: true
+      when: "'gh' in common_packages"
+      tags: [packages, gh]
+
+    - name: Add GitHub CLI apt repository
+      apt_repository:
+        repo: "deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main"
+        filename: github-cli
+        state: present
+        update_cache: true
+      become: true
+      when: "'gh' in common_packages"
+      tags: [packages, gh]
+
+    # Docker Engine + Compose (official Docker apt repo)
+    - name: Ensure apt keyrings directory exists (Docker)
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+      become: true
+      tags: [packages, docker]
+
+    - name: Download Docker GPG key
+      get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0644"
+      become: true
+      tags: [packages, docker]
+
+    - name: Convert Docker key to keyring (gpg --dearmor)
+      command: gpg --dearmor -o /etc/apt/keyrings/docker.gpg /etc/apt/keyrings/docker.asc
+      args:
+        creates: /etc/apt/keyrings/docker.gpg
+      become: true
+      tags: [packages, docker]
+
+    - name: Add Docker apt repository
+      apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release | default(ansible_facts.lsb.codename) }} stable"
+        filename: docker
+        state: present
+        update_cache: true
+      become: true
+      tags: [packages, docker]
+
+    - name: Install Docker Engine and Compose
+      apt:
+        name:
+          - ca-certificates
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+      become: true
+      tags: [packages, docker]
+
+    - name: Enable and start Docker service
+      service:
+        name: docker
+        enabled: true
+        state: started
+      become: true
+      tags: [docker]
+
+    - name: Add current user to docker group (no sudo for docker)
+      user:
+        name: "{{ ansible_user_id }}"
+        groups: docker
+        append: true
+      become: true
+      tags: [docker]
+
+    - name: Download Signal apt key (when signal-desktop requested)
+      get_url:
+        url: https://updates.signal.org/desktop/apt/keys.asc
+        dest: /usr/share/keyrings/signal-desktop-keyring.asc
+        mode: "0644"
+      become: true
+      when: "'signal-desktop' in common_packages"
+      tags: [packages, signal]
+
+
+    - name: Convert Signal key to keyring (gpg --dearmor)
+      command: gpg --dearmor -o /usr/share/keyrings/signal-desktop-keyring.gpg /usr/share/keyrings/signal-desktop-keyring.asc
+      args:
+        creates: /usr/share/keyrings/signal-desktop-keyring.gpg
+      become: true
+      when: "'signal-desktop' in common_packages"
+      tags: [packages, signal]
+
+    - name: Add Signal apt repository
+      apt_repository:
+        repo: "deb [arch=amd64 signed-by=/usr/share/keyrings/signal-desktop-keyring.gpg] https://updates.signal.org/desktop/apt xenial main"
+        filename: signal-desktop
+        state: present
+        update_cache: true
+      become: true
+      when: "'signal-desktop' in common_packages"
+      tags: [packages, signal]
 
     - name: Install packages (apt)
       apt:
         name: "{{ common_packages }}"
         state: present
         update_cache: true
+      become: true
       when: common_packages | length > 0
       tags: [packages]
 
@@ -37,5 +152,253 @@
         name: ssh
         enabled: true
         state: started
+      become: true
       when: "'openssh-server' in common_packages"
       tags: [packages]
+
+    # Xsession desktop entry for GDM to run ~/.xsession
+    - name: Ensure xsessions directory exists
+      file:
+        path: /usr/share/xsessions
+        state: directory
+        mode: "0755"
+      become: true
+      tags: [xsession]
+
+    - name: Install Xsession desktop entry for GDM (Xorg)
+      copy:
+        dest: /usr/share/xsessions/xsession.desktop
+        mode: "0644"
+        content: |
+          [Desktop Entry]
+          Name=Xsession (Xorg)
+          Comment=Run /etc/X11/Xsession which sources ~/.xsession
+          Exec=/etc/X11/Xsession
+          TryExec=/etc/X11/Xsession
+          Type=Application
+          DesktopNames=X-Generic
+          X-GDM-SessionType=xorg
+      become: true
+      tags: [xsession]
+
+    - name: Symlink ~/.xsession from dotfiles (.thinkpad) if present
+      file:
+        src: "{{ user_home }}/git/cwage/dotfiles/.xsession.thinkpad"
+        dest: "{{ user_home }}/.xsession"
+        state: link
+        force: true
+        follow: false
+      when: lookup('ansible.builtin.fileglob', user_home + '/git/cwage/dotfiles/.xsession.thinkpad', wantlist=False) != ''
+      become: false
+      tags: [xsession]
+
+
+    # Awesome WM setup: install package via apt (packages) and link config from dotfiles (awesome)
+    - name: Ensure ~/.config exists
+      file:
+        path: "{{ user_home }}/.config"
+        state: directory
+        mode: "0755"
+      become: false
+      tags: [awesome]
+
+    - name: Symlink ~/.config/awesome from dotfiles (if present)
+      file:
+        src: "{{ user_home }}/git/cwage/dotfiles/.config/awesome"
+        dest: "{{ user_home }}/.config/awesome"
+        state: link
+        force: true
+        follow: false
+      when: lookup('ansible.builtin.fileglob', user_home + '/git/cwage/dotfiles/.config/awesome', wantlist=False) != ''
+      become: false
+      tags: [awesome]
+
+    # btop config from dotfiles
+    - name: Symlink ~/.config/btop from dotfiles (if present)
+      file:
+        src: "{{ user_home }}/git/cwage/dotfiles/.config/btop"
+        dest: "{{ user_home }}/.config/btop"
+        state: link
+        force: true
+        follow: false
+      when: lookup('ansible.builtin.fileglob', user_home + '/git/cwage/dotfiles/.config/btop', wantlist=False) != ''
+      become: false
+      tags: [btop]
+
+    - name: Symlink ~/.config/udiskie from dotfiles (if present)
+      file:
+        src: "{{ user_home }}/git/cwage/dotfiles/.config/udiskie"
+        dest: "{{ user_home }}/.config/udiskie"
+        state: link
+        force: true
+        follow: false
+      when: lookup('ansible.builtin.fileglob', user_home + '/git/cwage/dotfiles/.config/udiskie', wantlist=False) != ''
+      become: false
+      tags: [udiskie]
+
+    - name: Symlink ~/.config/dunst from dotfiles (if present)
+      file:
+        src: "{{ user_home }}/git/cwage/dotfiles/.config/dunst"
+        dest: "{{ user_home }}/.config/dunst"
+        state: link
+        force: true
+        follow: false
+      when: lookup('ansible.builtin.fileglob', user_home + '/git/cwage/dotfiles/.config/dunst', wantlist=False) != ''
+      become: false
+      tags: [dunst]
+
+    - name: Symlink ~/.Xresources from dotfiles (.thinkpad) if present
+      file:
+        src: "{{ user_home }}/git/cwage/dotfiles/.Xresources.thinkpad"
+        dest: "{{ user_home }}/.Xresources"
+        state: link
+        force: true
+        follow: false
+      when: lookup('ansible.builtin.fileglob', user_home + '/git/cwage/dotfiles/.Xresources.thinkpad', wantlist=False) != ''
+      become: false
+      tags: [xresources]
+
+    # General dotfile symlinks (safe set, excludes ~/.git and ~/.gnupg)
+    - name: Symlink common dotfiles from repo (if present)
+      file:
+        src: "{{ user_home }}/git/cwage/dotfiles/{{ item }}"
+        dest: "{{ user_home }}/{{ item }}"
+        state: link
+        force: true
+        follow: false
+      loop:
+        - .bash_profile
+        - .bashrc
+        - .dir_colors
+        - .fonts
+        - .gitconfig
+        - .gitignore
+        - .screenrc
+        - .tmux.conf
+        - .vim
+        - .vimrc
+      when: lookup('ansible.builtin.fileglob', user_home + '/git/cwage/dotfiles/' + item, wantlist=False) != ''
+      become: false
+      tags: [dotlinks]
+
+    # SSH config: keep keys local, link only config.d if present
+    - name: Ensure ~/.ssh exists with safe permissions
+      file:
+        path: "{{ user_home }}/.ssh"
+        state: directory
+        mode: "0700"
+      become: false
+      tags: [dotlinks]
+
+    - name: Symlink ~/.ssh/config.d from dotfiles (if present)
+      file:
+        src: "{{ user_home }}/git/cwage/dotfiles/.ssh/config.d"
+        dest: "{{ user_home }}/.ssh/config.d"
+        state: link
+        force: true
+        follow: false
+      when: lookup('ansible.builtin.fileglob', user_home + '/git/cwage/dotfiles/.ssh/config.d', wantlist=False) != ''
+      become: false
+      tags: [dotlinks]
+
+    # Spacemacs setup: clone Spacemacs and link ~/.spacemacs from dotfiles
+    - name: Check if ~/.emacs.d exists
+      stat:
+        path: "{{ user_home }}/.emacs.d"
+      register: emacsd
+      become: false
+      tags: [emacs, spacemacs]
+
+    - name: Clone Spacemacs into ~/.emacs.d (branch {{ spacemacs_branch }})
+      git:
+        repo: https://github.com/syl20bnr/spacemacs.git
+        dest: "{{ user_home }}/.emacs.d"
+        version: "{{ spacemacs_branch }}"
+        update: no
+      when: not emacsd.stat.exists
+      become: false
+      tags: [emacs, spacemacs]
+
+    - name: Symlink ~/.spacemacs from dotfiles (if present)
+      file:
+        src: "{{ user_home }}/git/cwage/dotfiles/.spacemacs"
+        dest: "{{ user_home }}/.spacemacs"
+        state: link
+        force: true
+        follow: false
+      when: lookup('ansible.builtin.fileglob', user_home + '/git/cwage/dotfiles/.spacemacs', wantlist=False) != ''
+      become: false
+      tags: [emacs, spacemacs]
+
+    # rbenv (user-scoped install to match ~/.bashrc expectations)
+    - name: Check if rbenv is installed in ~/.rbenv
+      stat:
+        path: "{{ user_home }}/.rbenv/bin/rbenv"
+      register: rbenv_bin
+      become: false
+      tags: [rbenv]
+
+    # Volta + Node (user-scoped)
+    - name: Check for Volta (~/.volta/bin/volta)
+      stat:
+        path: "{{ user_home }}/.volta/bin/volta"
+      register: volta_bin
+      become: false
+      tags: [node, volta]
+
+    - name: Install Volta (skip profile setup)
+      shell: "curl -fsSL https://get.volta.sh | bash -s -- --skip-setup"
+      args:
+        executable: /bin/bash
+      environment:
+        HOME: "{{ user_home }}"
+      when: not volta_bin.stat.exists
+      become: false
+      tags: [node, volta]
+
+    - name: Ensure Node LTS via Volta
+      shell: "{{ user_home }}/.volta/bin/volta install node@lts"
+      environment:
+        HOME: "{{ user_home }}"
+        PATH: "{{ user_home }}/.volta/bin:{{ ansible_env.PATH }}"
+      become: false
+      tags: [node]
+
+    - name: Install global npm packages (if any)
+      shell: "npm install -g {{ item }}"
+      loop: "{{ npm_global_packages }}"
+      environment:
+        HOME: "{{ user_home }}"
+        PATH: "{{ user_home }}/.volta/bin:{{ ansible_env.PATH }}"
+      when: npm_global_packages | length > 0
+      become: false
+      tags: [node]
+
+    - name: Install rbenv into ~/.rbenv
+      git:
+        repo: https://github.com/rbenv/rbenv.git
+        dest: "{{ user_home }}/.rbenv"
+        version: master
+        update: no
+      when: not rbenv_bin.stat.exists
+      become: false
+      tags: [rbenv]
+
+    - name: Ensure rbenv plugins dir exists
+      file:
+        path: "{{ user_home }}/.rbenv/plugins"
+        state: directory
+        mode: "0755"
+      when: rbenv_bin.stat.exists or (lookup('ansible.builtin.fileglob', user_home + '/.rbenv', wantlist=False) != '')
+      become: false
+      tags: [rbenv]
+
+    - name: Install ruby-build as rbenv plugin
+      git:
+        repo: https://github.com/rbenv/ruby-build.git
+        dest: "{{ user_home }}/.rbenv/plugins/ruby-build"
+        version: master
+        update: no
+      when: lookup('ansible.builtin.fileglob', user_home + '/.rbenv', wantlist=False) != ''
+      become: false
+      tags: [rbenv]
