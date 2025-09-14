@@ -8,3 +8,52 @@ common_packages:
   - brave-browser
   - git
   - btop
+  - xterm
+  - awesome
+  - policykit-1-gnome
+  - xmms2
+  - xmms2-plugin-pulse
+  # - xscreensaver  # switched to xsecurelock
+  # - xautolock     # still used, but with xsecurelock as locker
+  - emacs
+  - ripgrep
+  - xss-lock
+  - xsecurelock
+  - vim
+  # Ruby build dependencies for rbenv/ruby-build
+  - build-essential
+  - autoconf
+  - bison
+  - libssl-dev
+  - libyaml-dev
+  - libreadline-dev
+  - zlib1g-dev
+  - libncurses-dev
+  - libffi-dev
+  - libgdbm-dev
+  - libgdbm-compat-dev
+  - volumeicon-alsa
+  - pavucontrol
+  - signal-desktop
+  - udiskie
+  - dunst
+  # - gnome-keyring  # Uncomment if you want the GNOME keyring/secret-service
+  - ffmpeg
+  - mplayer
+  - audacity
+  - pipewire-jack
+  - libspa-0.2-jack
+  - ardour
+  - ardour-data
+  - ardour-lv2-plugins
+  - ardour-video-timeline
+  - gh
+
+
+# Spacemacs branch to install in ~/.emacs.d
+spacemacs_branch: develop
+
+# Global npm packages to install (via Volta-managed Node)
+npm_global_packages:
+  - "@openai/codex"
+  # - @githubnext/github-copilot-cli
