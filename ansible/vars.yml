@@ -48,6 +48,9 @@ common_packages:
   - ardour-lv2-plugins
   - ardour-video-timeline
   - gh
+  - fluidsynth
+  - fluid-soundfont-gm
+  - fluid-soundfont-gs
 
 
 # Spacemacs branch to install in ~/.emacs.d
