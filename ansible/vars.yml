@@ -32,6 +32,8 @@ common_packages:
   - libffi-dev
   - libgdbm-dev
   - libgdbm-compat-dev
+  - cbatticon
+  - xfce4-power-manager
   - volumeicon-alsa
   - pavucontrol
   - signal-desktop
