@@ -54,6 +54,9 @@ common_packages:
   - fluid-soundfont-gm
   - fluid-soundfont-gs
 
+# Manage GDM login screen hardening (disable user list, require typing username)
+configure_gdm_login_screen: true
+
 
 # Spacemacs branch to install in ~/.emacs.d
 spacemacs_branch: develop

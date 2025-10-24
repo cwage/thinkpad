@@ -201,6 +201,66 @@
       become: false
       tags: [xsession]
 
+    # GDM login screen hardening: disable user list, require manual username entry
+    - name: Gather package facts for login manager
+      package_facts:
+        manager: apt
+      when: configure_gdm_login_screen
+      become: true
+      tags: [gdm]
+
+    - name: Ensure gdm3 is installed before configuring login screen
+      assert:
+        that:
+          - ansible_facts.packages is defined
+          - "'gdm3' in ansible_facts.packages"
+        fail_msg: "configure_gdm_login_screen is true but gdm3 is not installed."
+        success_msg: "gdm3 detected; configuring login screen."
+      when: configure_gdm_login_screen
+      tags: [gdm]
+
+    - name: Ensure /etc/dconf/profile exists for GDM overrides
+      file:
+        path: /etc/dconf/profile
+        state: directory
+        mode: "0755"
+      when: configure_gdm_login_screen
+      become: true
+      tags: [gdm]
+
+    - name: Install gdm dconf profile
+      copy:
+        src: files/gdm-profile
+        dest: /etc/dconf/profile/gdm
+        owner: root
+        group: root
+        mode: "0644"
+      when: configure_gdm_login_screen
+      become: true
+      tags: [gdm]
+      notify: Run dconf update
+
+    - name: Ensure /etc/dconf/db/gdm.d exists
+      file:
+        path: /etc/dconf/db/gdm.d
+        state: directory
+        mode: "0755"
+      when: configure_gdm_login_screen
+      become: true
+      tags: [gdm]
+
+    - name: Configure GDM login screen settings
+      copy:
+        src: files/gdm-login-screen
+        dest: /etc/dconf/db/gdm.d/00-login-screen
+        owner: root
+        group: root
+        mode: "0644"
+      when: configure_gdm_login_screen
+      become: true
+      tags: [gdm]
+      notify: Run dconf update
+
 
     # Awesome WM setup: install package via apt (packages) and link config from dotfiles (awesome)
     - name: Ensure ~/.config exists
@@ -411,3 +471,9 @@
       when: lookup('ansible.builtin.fileglob', user_home + '/.rbenv', wantlist=False) != ''
       become: false
       tags: [rbenv]
+
+  handlers:
+    - name: Run dconf update
+      command: dconf update
+      become: true
+      changed_when: false
