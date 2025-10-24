@@ -1,0 +1,59 @@
+/*
+  GDM login screen privacy overrides
+  - Hide Activities/left panel button
+  - Hide center clock/date menu
+  - Hide status icons (Wi‑Fi, battery, volume, etc.) in the top-right indicator
+  - Keep the top-right button clickable so Power Off is still accessible
+
+  Notes:
+  - GNOME Shell CSS does not support `display: none`, so we collapse size and set opacity to 0.
+  - Selectors cover both older (aggregateMenu) and newer (quickSettings) shells.
+  - This only affects the GDM greeter when compiled into the GDM theme resource.
+*/
+
+/* Hide left-side Activities/app menu (login screen context) */
+#panel.login-screen .activities-button,
+#panel.login-screen #panelActivities,
+#panel.login-screen .panel-button.appmenu,
+#panel.login-screen .panel-button .app-menu-icon {
+  opacity: 0;
+  width: 0; height: 0;
+  padding: 0; margin: 0;
+}
+
+/* Hide center clock/date on login screen */
+#panel.login-screen .panel-button.clock-display,
+#panel.login-screen #dateMenu {
+  opacity: 0;
+  width: 0; height: 0;
+  padding: 0; margin: 0;
+}
+
+/* Hide status icons in the right-side indicator area (Wi‑Fi/battery/volume/arrow) on login screen */
+#panel.login-screen .panel-button .panel-status-menu-box > *,
+#panel.login-screen .panel-button .panel-status-indicators-box > *,
+#panel.login-screen .panel-button .system-status-icon,
+#panel.login-screen .panel-button .popup-menu-arrow,
+#aggregateMenu .system-status-icon,
+#aggregateMenu .popup-menu-arrow,
+#quickSettings .system-status-icon,
+#quickSettings .popup-menu-arrow {
+  opacity: 0;
+  width: 0; height: 0;
+  padding: 0; margin: 0;
+}
+
+/* Slightly reduce panel height to minimize empty space, while remaining clickable */
+#panel {
+  min-height: 18px;
+  height: 18px;
+}
+
+/* Hide any vendor logo shown in the login dialog */
+.login-dialog .logo,
+#loginDialog .logo,
+.login-dialog-logo-bin {
+  opacity: 0;
+  width: 0; height: 0;
+  padding: 0; margin: 0;
+}

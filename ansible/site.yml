@@ -198,8 +198,367 @@
         force: true
         follow: false
       when: lookup('ansible.builtin.fileglob', user_home + '/git/cwage/dotfiles/.xsession.thinkpad', wantlist=False) != ''
-      become: false
-      tags: [xsession]
+
+    # ------------------------------------------------------------
+    # GDM login screen privacy hardening (branding + status panel)
+    # ------------------------------------------------------------
+    - name: Ensure GLib resource tools are installed (for gresource compile)
+      apt:
+        name:
+          - libglib2.0-bin      # gresource utility
+          - libglib2.0-dev-bin  # glib-compile-resources
+        state: present
+        update_cache: true
+      become: true
+      when: gdm_hide_panel_info | default(true)
+      tags: [gdm, login]
+
+    - name: Ensure dconf database directory for GDM exists
+      file:
+        path: /etc/dconf/db/gdm.d
+        state: directory
+        mode: "0755"
+      become: true
+      when: configure_gdm_login_screen | default(true)
+      tags: [gdm, login]
+
+    - name: Disable vendor logo on GDM login screen (dconf override)
+      copy:
+        dest: /etc/dconf/db/gdm.d/00-login-screen-privacy
+        mode: "0644"
+        content: |
+          [org/gnome/login-screen]
+          # Empty logo path disables vendor branding on the greeter.
+          logo=''
+      become: true
+      when: configure_gdm_login_screen | default(true)
+      notify: Rebuild dconf database (login)
+      tags: [gdm, login]
+
+    - name: Create staging directory for GDM theme override
+      file:
+        path: /etc/gdm3/theme-override.d
+        state: directory
+        mode: "0755"
+      become: true
+      when: gdm_hide_panel_info | default(true)
+      tags: [gdm, login]
+
+    - name: Back up original GNOME Shell theme resource (once)
+      copy:
+        src: /usr/share/gnome-shell/gnome-shell-theme.gresource
+        dest: /usr/share/gnome-shell/gnome-shell-theme.gresource.orig
+        remote_src: true
+        mode: "0644"
+      become: true
+      when: gdm_hide_panel_info | default(true)
+      tags: [gdm, login]
+
+    # Extract current theme resources from the existing .gresource bundle
+    - name: Ensure fresh extraction tree for theme resources
+      file:
+        path: /etc/gdm3/theme-override.d/src
+        state: absent
+      become: true
+      when: gdm_hide_panel_info | default(true)
+      tags: [gdm, login]
+
+    - name: Create extraction tree root
+      file:
+        path: /etc/gdm3/theme-override.d/src
+        state: directory
+        mode: "0755"
+      become: true
+      when: gdm_hide_panel_info | default(true)
+      tags: [gdm, login]
+
+    - name: List resources from gnome-shell theme bundle
+      command: gresource list /usr/share/gnome-shell/gnome-shell-theme.gresource
+      register: gresource_list
+      changed_when: false
+      when: gdm_hide_panel_info | default(true)
+      tags: [gdm, login]
+
+    - name: Fail if theme gresource could not be listed
+      fail:
+        msg: "Could not list resources in /usr/share/gnome-shell/gnome-shell-theme.gresource"
+      when: gdm_hide_panel_info | default(true) and (gresource_list.stdout | default('')) == ''
+      tags: [gdm, login]
+
+    - name: Determine target CSS resource (prefer gdm.css)
+      set_fact:
+        theme_resources: "{{ gresource_list.stdout_lines }}"
+        res_gdm_css: "{{ (gresource_list.stdout_lines | select('search', '/org/gnome/shell/theme/gdm\\.css$') | list | first | default('')) }}"
+        res_shell_css: "{{ (gresource_list.stdout_lines | select('search', '/org/gnome/shell/theme/gnome-shell\\.css$') | list | first | default('')) }}"
+      when: gdm_hide_panel_info | default(true)
+      tags: [gdm, login]
+
+    - name: Choose CSS resource and fail if none
+      set_fact:
+        target_css_res: "{{ res_gdm_css if res_gdm_css != '' else res_shell_css }}"
+      when: gdm_hide_panel_info | default(true)
+      tags: [gdm, login]
+
+    - name: Abort when no CSS resource found in theme
+      fail:
+        msg: "No gdm.css or gnome-shell.css found in theme gresource; cannot apply override."
+      when: gdm_hide_panel_info | default(true) and (target_css_res | default('')) == ''
+      tags: [gdm, login]
+
+    - name: Create directories for extracted resources
+      file:
+        path: "/etc/gdm3/theme-override.d/src/{{ (item | regex_replace('^/','')) | regex_replace('/[^/]+$','') }}"
+        state: directory
+        mode: "0755"
+      loop: "{{ theme_resources }}"
+      loop_control:
+        label: "{{ item }}"
+      become: true
+      when: gdm_hide_panel_info | default(true)
+      tags: [gdm, login]
+
+    - name: Extract resource files to staging
+      shell: >-
+        gresource extract /usr/share/gnome-shell/gnome-shell-theme.gresource "{{ item }}" 
+        > "/etc/gdm3/theme-override.d/src/{{ item | regex_replace('^/','') }}"
+      args:
+        executable: /bin/bash
+        creates: "/etc/gdm3/theme-override.d/src/{{ item | regex_replace('^/','') }}"
+      loop: "{{ theme_resources }}"
+      loop_control:
+        label: "{{ item }}"
+      become: true
+      when: gdm_hide_panel_info | default(true)
+      tags: [gdm, login]
+
+    - name: Read extracted base CSS
+      slurp:
+        src: "/etc/gdm3/theme-override.d/src/{{ target_css_res | regex_replace('^/','') }}"
+      register: extracted_base_css
+      become: true
+      when: gdm_hide_panel_info | default(true)
+      tags: [gdm, login]
+
+    - name: Append privacy override to CSS (idempotent per fresh extraction)
+      copy:
+        dest: "/etc/gdm3/theme-override.d/src/{{ target_css_res | regex_replace('^/','') }}"
+        mode: "0644"
+        content: |
+          {{ extracted_base_css.content | b64decode }}
+
+          /* --- Begin privacy override (appended) --- */
+          {{ lookup('ansible.builtin.file', 'files/gdm-login/override.css') }}
+          /* --- End privacy override --- */
+      become: true
+      when: gdm_hide_panel_info | default(true)
+      tags: [gdm, login]
+
+    - name: Generate gresource manifest from extracted files
+      template:
+        src: templates/gdm-login/gnome-shell-theme.gresource.xml.j2
+        dest: /etc/gdm3/theme-override.d/gnome-shell-theme.gresource.xml
+        mode: "0644"
+      vars:
+        resource_files: "{{ theme_resources | map('regex_replace','^/','') | list }}"
+      become: true
+      when: gdm_hide_panel_info | default(true)
+      tags: [gdm, login]
+
+    - name: Recompile GNOME Shell theme resource with merged CSS (from extracted tree)
+      command: >-
+        glib-compile-resources
+        --sourcedir=/etc/gdm3/theme-override.d/src
+        --target=/usr/share/gnome-shell/gnome-shell-theme.gresource
+        /etc/gdm3/theme-override.d/gnome-shell-theme.gresource.xml
+      become: true
+      when: gdm_hide_panel_info | default(true)
+      tags: [gdm, login]
+
+    # --- Ubuntu Yaru theme variant (used by GDM on Ubuntu) ---
+    - name: Check for Ubuntu Yaru Shell theme bundle
+      stat:
+        path: /usr/share/gnome-shell/theme/Yaru/gnome-shell-theme.gresource
+      register: yaru_bundle
+      become: true
+      when: gdm_hide_panel_info | default(true)
+      tags: [gdm, login]
+
+    - name: Back up original Yaru Shell theme resource (once)
+      copy:
+        src: /usr/share/gnome-shell/theme/Yaru/gnome-shell-theme.gresource
+        dest: /usr/share/gnome-shell/theme/Yaru/gnome-shell-theme.gresource.orig
+        remote_src: true
+        mode: "0644"
+      become: true
+      when: gdm_hide_panel_info | default(true) and yaru_bundle.stat.exists
+      tags: [gdm, login]
+
+    - name: Ensure fresh extraction tree for Yaru theme resources
+      file:
+        path: /etc/gdm3/theme-override.d/src-yaru
+        state: absent
+      become: true
+      when: gdm_hide_panel_info | default(true) and yaru_bundle.stat.exists
+      tags: [gdm, login]
+
+    - name: Create extraction tree root (Yaru)
+      file:
+        path: /etc/gdm3/theme-override.d/src-yaru
+        state: directory
+        mode: "0755"
+      become: true
+      when: gdm_hide_panel_info | default(true) and yaru_bundle.stat.exists
+      tags: [gdm, login]
+
+    - name: List resources from Yaru theme bundle
+      command: gresource list /usr/share/gnome-shell/theme/Yaru/gnome-shell-theme.gresource
+      register: yaru_gresource_list
+      changed_when: false
+      when: gdm_hide_panel_info | default(true) and yaru_bundle.stat.exists
+      tags: [gdm, login]
+
+    - name: Fail if Yaru theme gresource could not be listed
+      fail:
+        msg: "Could not list resources in /usr/share/gnome-shell/theme/Yaru/gnome-shell-theme.gresource"
+      when: gdm_hide_panel_info | default(true) and yaru_bundle.stat.exists and (yaru_gresource_list.stdout | default('')) == ''
+      tags: [gdm, login]
+
+    - name: Capture Yaru theme resource list
+      set_fact:
+        yaru_theme_resources: "{{ yaru_gresource_list.stdout_lines }}"
+      when: gdm_hide_panel_info | default(true) and yaru_bundle.stat.exists
+      tags: [gdm, login]
+
+    - name: Locate Yaru gdm.css (if present)
+      set_fact:
+        yaru_res_gdm_css: "{{ (yaru_theme_resources | select('search', 'gdm\\.css$') | list | first | default('')) }}"
+      when: gdm_hide_panel_info | default(true) and yaru_bundle.stat.exists
+      tags: [gdm, login]
+
+    - name: Locate Yaru gnome-shell.css (any variant path)
+      set_fact:
+        yaru_res_shell_css: "{{ (yaru_theme_resources | select('search', 'gnome-shell\\.css$') | list | first | default('')) }}"
+      when: gdm_hide_panel_info | default(true) and yaru_bundle.stat.exists
+      tags: [gdm, login]
+
+    - name: Choose target CSS resource for Yaru
+      set_fact:
+        yaru_target_css_res: "{{ yaru_res_gdm_css if (yaru_res_gdm_css | default('')) != '' else yaru_res_shell_css }}"
+      when: gdm_hide_panel_info | default(true) and yaru_bundle.stat.exists
+      tags: [gdm, login]
+
+    - name: Abort when no CSS resource found in Yaru theme
+      fail:
+        msg: "No gdm.css or gnome-shell.css found in Yaru theme gresource; cannot apply override."
+      when: gdm_hide_panel_info | default(true) and yaru_bundle.stat.exists and (yaru_target_css_res | default('')) == ''
+      tags: [gdm, login]
+
+    - name: Create directories for extracted Yaru resources
+      file:
+        path: "/etc/gdm3/theme-override.d/src-yaru/{{ (item | regex_replace('^/','')) | regex_replace('/[^/]+$','') }}"
+        state: directory
+        mode: "0755"
+      loop: "{{ yaru_theme_resources }}"
+      loop_control:
+        label: "{{ item }}"
+      become: true
+      when: gdm_hide_panel_info | default(true) and yaru_bundle.stat.exists
+      tags: [gdm, login]
+
+    - name: Extract Yaru resource files to staging
+      shell: >-
+        gresource extract /usr/share/gnome-shell/theme/Yaru/gnome-shell-theme.gresource "{{ item }}" 
+        > "/etc/gdm3/theme-override.d/src-yaru/{{ item | regex_replace('^/','') }}"
+      args:
+        executable: /bin/bash
+        creates: "/etc/gdm3/theme-override.d/src-yaru/{{ item | regex_replace('^/','') }}"
+      loop: "{{ yaru_theme_resources }}"
+      loop_control:
+        label: "{{ item }}"
+      become: true
+      when: gdm_hide_panel_info | default(true) and yaru_bundle.stat.exists
+      tags: [gdm, login]
+
+    - name: Read extracted Yaru base CSS
+      slurp:
+        src: "/etc/gdm3/theme-override.d/src-yaru/{{ yaru_target_css_res | regex_replace('^/','') }}"
+      register: yaru_extracted_base_css
+      become: true
+      when: gdm_hide_panel_info | default(true) and yaru_bundle.stat.exists
+      tags: [gdm, login]
+
+    - name: Append privacy override to Yaru CSS
+      copy:
+        dest: "/etc/gdm3/theme-override.d/src-yaru/{{ yaru_target_css_res | regex_replace('^/','') }}"
+        mode: "0644"
+        content: |
+          {{ yaru_extracted_base_css.content | b64decode }}
+
+          /* --- Begin privacy override (appended) --- */
+          {{ lookup('ansible.builtin.file', 'files/gdm-login/override.css') }}
+          /* --- End privacy override --- */
+      become: true
+      when: gdm_hide_panel_info | default(true) and yaru_bundle.stat.exists
+      tags: [gdm, login]
+
+    - name: Generate Yaru gresource manifest from extracted files
+      template:
+        src: templates/gdm-login/gnome-shell-theme.gresource.xml.j2
+        dest: /etc/gdm3/theme-override.d/gnome-shell-theme-yaru.gresource.xml
+        mode: "0644"
+      vars:
+        resource_files: "{{ yaru_theme_resources | map('regex_replace','^/','') | list }}"
+      become: true
+      when: gdm_hide_panel_info | default(true) and yaru_bundle.stat.exists
+      tags: [gdm, login]
+
+    - name: Recompile Yaru Shell theme resource with merged CSS
+      command: >-
+        glib-compile-resources
+        --sourcedir=/etc/gdm3/theme-override.d/src-yaru
+        --target=/usr/share/gnome-shell/theme/Yaru/gnome-shell-theme.gresource
+        /etc/gdm3/theme-override.d/gnome-shell-theme-yaru.gresource.xml
+      become: true
+      when: gdm_hide_panel_info | default(true) and yaru_bundle.stat.exists
+      tags: [gdm, login]
+
+    - name: Check for original GNOME Shell theme resource backup
+      stat:
+        path: /usr/share/gnome-shell/gnome-shell-theme.gresource.orig
+      register: gresource_backup
+      become: true
+      when: not (gdm_hide_panel_info | default(true))
+      tags: [gdm, login]
+
+    - name: Restore original GNOME Shell theme resource when override disabled
+      copy:
+        src: /usr/share/gnome-shell/gnome-shell-theme.gresource.orig
+        dest: /usr/share/gnome-shell/gnome-shell-theme.gresource
+        remote_src: true
+        mode: "0644"
+      become: true
+      when: not (gdm_hide_panel_info | default(true)) and gresource_backup.stat.exists
+      tags: [gdm, login]
+
+    - name: Check for original Yaru Shell theme resource backup
+      stat:
+        path: /usr/share/gnome-shell/theme/Yaru/gnome-shell-theme.gresource.orig
+      register: yaru_gresource_backup
+      become: true
+      when: not (gdm_hide_panel_info | default(true))
+      tags: [gdm, login]
+
+    - name: Restore original Yaru Shell theme resource when override disabled
+      copy:
+        src: /usr/share/gnome-shell/theme/Yaru/gnome-shell-theme.gresource.orig
+        dest: /usr/share/gnome-shell/theme/Yaru/gnome-shell-theme.gresource
+        remote_src: true
+        mode: "0644"
+      become: true
+      when: not (gdm_hide_panel_info | default(true)) and yaru_gresource_backup.stat.exists
+      tags: [gdm, login]
+
+  
 
     # GDM login screen hardening: disable user list, require manual username entry
     - name: Gather package facts for login manager
@@ -477,3 +836,7 @@
       ansible.builtin.command: dconf update
       become: true
       changed_when: false
+    - name: Rebuild dconf database (login)
+      command: dconf update
+      become: true
+      listen: Rebuild dconf database (login)

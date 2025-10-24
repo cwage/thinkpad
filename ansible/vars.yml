@@ -57,6 +57,9 @@ common_packages:
 # Manage GDM login screen hardening (disable user list, require typing username)
 configure_gdm_login_screen: true
 
+# Hide information on GDM (login screen) top bar (Activities, clock, Wi‑Fi/battery icons)
+gdm_hide_panel_info: true
+
 
 # Spacemacs branch to install in ~/.emacs.d
 spacemacs_branch: develop
