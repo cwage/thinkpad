@@ -474,6 +474,6 @@
 
   handlers:
     - name: Run dconf update
-      command: dconf update
+      ansible.builtin.command: dconf update
       become: true
       changed_when: false
