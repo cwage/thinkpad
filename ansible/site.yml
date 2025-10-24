@@ -156,6 +156,15 @@
       when: "'openssh-server' in common_packages"
       tags: [packages]
 
+    # Input method: install custom launcher script to avoid ibus autostart
+    - name: Disable im-launch wrapper (prevents ibus autostart)
+      copy:
+        src: files/70im-config_launch
+        dest: /etc/X11/Xsession.d/70im-config_launch
+        mode: "0755"
+      become: true
+      tags: [xsession, input_method]
+
     # Xsession desktop entry for GDM to run ~/.xsession
     - name: Ensure xsessions directory exists
       file:
